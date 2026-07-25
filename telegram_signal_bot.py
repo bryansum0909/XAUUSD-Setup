@@ -192,7 +192,7 @@ def check_once(cfg, dry_run=False):
         else:
             send_telegram(cfg["bot_token"], cfg["chat_id"], rmsg)
             print(f"sent regime {'FLIP ' + flipped if flipped else 'heartbeat'}")
-        state["regime_hb_date"] = today
+            state["regime_hb_date"] = today   # only mark 'done today' when ACTUALLY sent
     state["regime_on"] = st["regime_on"]
 
     # --- H1 basket + Method #1 family ---
