@@ -167,7 +167,7 @@ def format_regime(st: dict, flipped=None) -> str:
         f"📆 Tren Mingguan (EMA20/50): {yn(st['weekly_up'])}  ← tambahan utk Method#1\n"
         f"———————————————\n"
         f"REGIME ON = Tren Harian ✅ + Dolar LEMAH ✅ (ORB_M15 bisa entry).\n"
-        f"Method#1 butuh + Mingguan ✅ + ADX<25. Selama regime OFF, tidak ada sinyal LONG.\n"
+        f"Method#1 butuh + Mingguan ✅ + ADX&lt;25. Selama regime OFF, tidak ada sinyal LONG.\n"
         f"🕒 {dt.datetime.utcnow():%Y-%m-%d %H:%M} UTC"
     )
 
