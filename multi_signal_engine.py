@@ -139,3 +139,60 @@ def evaluate_all(df: pd.DataFrame, *, dxy_close=None, balance=10000.0, risk_pct=
             out.append(_make("DONCH_M1", "Donchian-50 LONG (RR1:3, DXY+ADX<25 gate)", "BUY",
                              df, sl_dist, 3.0 * sl_dist, lot_for(sl_dist), balance, risk_pct, atr, 3.0))
     return out
+
+
+def regime_status(df_h1: pd.DataFrame, dxy_close=None) -> dict:
+    """The gate that BOTH Method #1 family AND ORB_M15 require: uptrend + weak dollar.
+    Returns a dict the bot uses to (a) gate signals and (b) alert on regime flips."""
+    d1 = _trend(df_h1, "D1", 50, 200)
+    wk = _trend(df_h1, "W", 20, 50)
+    weak = dollar_weak(dxy_close)
+    dxy_val = float(dxy_close.iloc[-1]) if dxy_close is not None and len(dxy_close) else None
+    sma100 = None
+    if dxy_close is not None and len(dxy_close) >= 100:
+        s = dxy_close.rolling(100, min_periods=100).mean().iloc[-1]
+        sma100 = float(s) if np.isfinite(s) else None
+    # regime_on = the shared NECESSARY core for ANY long setup: daily uptrend + weak dollar.
+    # (ORB_M15's validated gate is exactly Daily-trend + DXY-weak. Method #1 additionally
+    #  requires weekly_up + ADX<25, reported separately.)
+    return {
+        "regime_on": bool(d1 == 1 and weak),
+        "daily_up": bool(d1 == 1), "weekly_up": bool(wk == 1), "dxy_weak": bool(weak),
+        "dxy": dxy_val, "dxy_sma100": sma100,
+        "dxy_gap": (round(dxy_val - sma100, 2) if (dxy_val is not None and sma100 is not None) else None),
+    }
+
+
+def evaluate_orb_m15(df_m15: pd.DataFrame, df_h1: pd.DataFrame, *, dxy_close=None,
+                     balance=10000.0, risk_pct=2.0, or_bars=4, round_lot_step=0.01):
+    """Opening-Range-Breakout LONG on M15, RR 1:3, gated by the SAME regime as Method #1
+    (Daily-up + Weekly-up + DXY-weak). Regime is read from the long H1 series (needs the
+    warmup); the breakout is read from today's M15 bars. Fires only on the fresh cross
+    above today's opening-range high, and only once the opening range is complete."""
+    if df_m15 is None or len(df_m15) < 20:
+        return []
+    df_m15 = df_m15[~df_m15.index.duplicated()].sort_index()
+    # regime gate (shared with Method #1) — computed on H1 for correct EMA warmup
+    st = regime_status(df_h1, dxy_close)
+    if not st["regime_on"]:
+        return []
+    # today's opening range
+    day = df_m15.index.normalize()
+    tmask = (day == day[-1])
+    tdf = df_m15[tmask]
+    n_today = len(tdf)
+    if n_today <= or_bars:            # opening range not complete / no post-OR bar yet
+        return []
+    or_high = float(tdf["high"].iloc[:or_bars].max())
+    c = float(df_m15["close"].iloc[-1]); cp = float(df_m15["close"].iloc[-2])
+    fresh = (c > or_high) and (cp <= or_high)   # first close above the OR high
+    if not fresh:
+        return []
+    atr = ind.atr(df_m15, 14).iloc[-1]
+    if not np.isfinite(atr) or atr <= 0:
+        return []
+    sl_dist = 1.5 * float(atr)
+    L = lot_for_risk(balance, risk_pct, sl_dist)
+    lot = max(round_lot_step, np.floor(L / round_lot_step) * round_lot_step)
+    return [_make("ORB_M15", "ORB M15 LONG (RR1:3, D1+W+DXY gate)", "BUY",
+                  df_m15, sl_dist, 3.0 * sl_dist, lot, balance, risk_pct, atr, 3.0)]

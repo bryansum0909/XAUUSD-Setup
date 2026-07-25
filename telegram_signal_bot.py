@@ -51,7 +51,7 @@ def load_cfg():
     c.setdefault("source", "dukascopy")   # 'dukascopy' (spot, matches backtest) | 'yahoo' | 'parquet'
     c.setdefault("n", 40); c.setdefault("rr", 1.5); c.setdefault("max_hold", 300)
     # which setups to send. Drop "PSAR" (noisy) or keep KELT_M1 (patented RR1:3) as you like.
-    c.setdefault("enabled_setups", ["DONCH_H4", "MACD_H4", "PSAR", "KELT_M1", "DONCH_M1"])
+    c.setdefault("enabled_setups", ["DONCH_H4", "MACD_H4", "PSAR", "KELT_M1", "DONCH_M1", "ORB_M15"])
     if os.environ.get("TG_SETUPS"):
         c["enabled_setups"] = [s.strip() for s in os.environ["TG_SETUPS"].split(",") if s.strip()]
     if os.environ.get("TG_BALANCE"):
@@ -76,10 +76,17 @@ def get_h1(source: str, lookback_days: int = 8) -> pd.DataFrame:
     return resample_ohlc(m1, "H1")
 
 
+def get_m15(lookback_days: int = 55) -> pd.DataFrame:
+    """M15 bars for ORB_M15 (Yahoo caps 15m history at ~60 days — enough for today's OR)."""
+    df = dl.fetch_yahoo("GC=F", interval="15m", range_=f"{lookback_days}d")
+    return df[~df.index.duplicated()].sort_index()
+
+
 def format_msg(sig: dict) -> str:
     arrow = "🟢 BUY" if sig["signal"] == "BUY" else "🔴 SELL"
+    tf = "M15" if sig.get("key") == "ORB_M15" else "H1"
     return (
-        f"<b>XAUUSD H1 — {arrow}</b>\n"
+        f"<b>XAUUSD {tf} — {arrow}</b>\n"
         f"📊 Setup: <b>{sig['setup']}</b>\n"
         f"🕒 Bar closed: {sig['bar_time']} UTC\n"
         f"———————————————\n"
@@ -136,6 +143,32 @@ def get_dxy():
         return None
 
 
+def format_regime(st: dict, flipped=None) -> str:
+    yn = lambda b: "✅" if b else "❌"
+    if flipped == "ON":
+        head = "🚨🟢 REGIME BARU AKTIF — uptrend + dolar lemah.\nMethod#1 & ORB_M15 mulai bisa entry LONG."
+    elif flipped == "OFF":
+        head = "🚨🔴 REGIME MATI — dolar menguat / tren patah.\nSTOP cari LONG (semua setup tidak akan trigger)."
+    else:
+        head = "🟢 REGIME AKTIF — boleh cari LONG" if st["regime_on"] else "🔴 REGIME OFF — jangan LONG dulu"
+    dxy_line = ""
+    if st["dxy"] is not None and st["dxy_sma100"] is not None:
+        tag = "LEMAH ✅" if st["dxy_weak"] else "KUAT ❌"
+        dxy_line = (f"💵 DXY {st['dxy']:.2f} vs SMA100 {st['dxy_sma100']:.2f} "
+                    f"(selisih {st['dxy_gap']:+.2f} → dolar {tag})\n")
+    return (
+        f"<b>{head}</b>\n"
+        f"———————————————\n"
+        f"📈 Tren Harian (EMA50/200): {yn(st['daily_up'])}  ← wajib\n"
+        f"{dxy_line}"
+        f"📆 Tren Mingguan (EMA20/50): {yn(st['weekly_up'])}  ← tambahan utk Method#1\n"
+        f"———————————————\n"
+        f"REGIME ON = Tren Harian ✅ + Dolar LEMAH ✅ (ORB_M15 bisa entry).\n"
+        f"Method#1 butuh + Mingguan ✅ + ADX<25. Selama regime OFF, tidak ada sinyal LONG.\n"
+        f"🕒 {dt.datetime.utcnow():%Y-%m-%d %H:%M} UTC"
+    )
+
+
 def check_once(cfg, dry_run=False):
     # 730d of H1 -> enough for Weekly EMA (Method#1) and H4 EMA200 (basket).
     df = get_h1("yahoo", lookback_days=730)
@@ -143,12 +176,41 @@ def check_once(cfg, dry_run=False):
     dxy = get_dxy()
     state = load_state()
     positions = state.get("positions") or {}
+    enabled = cfg.get("enabled_setups", mse.SETUP_KEYS)
+
+    # --- TIGHT REGIME MONITOR: alert the moment the regime flips ON/OFF, plus a daily heartbeat.
+    #     Both Method #1 family and ORB_M15 only fire while regime is ON, so this is the
+    #     single most important thing for the user to know is up-to-date. ---
+    st = mse.regime_status(df, dxy)
+    prev_on = state.get("regime_on")
+    flipped = "ON" if (prev_on is False and st["regime_on"]) else ("OFF" if (prev_on is True and not st["regime_on"]) else None)
+    today = f"{dt.datetime.utcnow():%Y-%m-%d}"
+    if flipped or state.get("regime_hb_date") != today:
+        rmsg = format_regime(st, flipped)
+        if dry_run or not cfg["bot_token"] or not cfg["chat_id"]:
+            print("--- REGIME ---\n" + rmsg + "\n")
+        else:
+            send_telegram(cfg["bot_token"], cfg["chat_id"], rmsg)
+            print(f"sent regime {'FLIP ' + flipped if flipped else 'heartbeat'}")
+        state["regime_hb_date"] = today
+    state["regime_on"] = st["regime_on"]
+
+    # --- H1 basket + Method #1 family ---
     active = {s["key"]: s for s in mse.evaluate_all(
         df, dxy_close=dxy, balance=cfg["balance"], risk_pct=cfg["risk_pct"])}
 
-    enabled = cfg.get("enabled_setups", mse.SETUP_KEYS)
+    # --- ORB_M15 (breakout read from M15, regime read from the long H1 series) ---
+    if "ORB_M15" in enabled:
+        try:
+            m15 = get_m15()
+            for s in mse.evaluate_orb_m15(m15, df, dxy_close=dxy,
+                                          balance=cfg["balance"], risk_pct=cfg["risk_pct"]):
+                active[s["key"]] = s
+        except Exception as e:
+            print("ORB_M15 skipped:", e)
+
     sent = 0
-    for key in mse.SETUP_KEYS:
+    for key in list(mse.SETUP_KEYS) + ["ORB_M15"]:
         if key not in enabled:
             continue
         pos = positions.get(key)
@@ -171,7 +233,7 @@ def check_once(cfg, dry_run=False):
     state["positions"] = positions
     save_state(state)
     if sent == 0:
-        print(f"[{dt.datetime.utcnow():%Y-%m-%d %H:%M} UTC] no new signal across the basket")
+        print(f"[{dt.datetime.utcnow():%Y-%m-%d %H:%M} UTC] no new signal | regime_on={st['regime_on']}")
 
 
 def replay(cfg, n_bars=800):
