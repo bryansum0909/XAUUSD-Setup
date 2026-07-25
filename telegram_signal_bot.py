@@ -51,7 +51,8 @@ def load_cfg():
     c.setdefault("source", "dukascopy")   # 'dukascopy' (spot, matches backtest) | 'yahoo' | 'parquet'
     c.setdefault("n", 40); c.setdefault("rr", 1.5); c.setdefault("max_hold", 300)
     # which setups to send. Drop "PSAR" (noisy) or keep KELT_M1 (patented RR1:3) as you like.
-    c.setdefault("enabled_setups", ["DONCH_H4", "MACD_H4", "PSAR", "KELT_M1", "DONCH_M1", "ORB_M15", "MA_M30"])
+    # focus on the 4 validated main methods; old basket (DONCH_H4/MACD_H4/PSAR) disabled
+    c.setdefault("enabled_setups", ["KELT_M1", "DONCH_M1", "ORB_M15", "MA_M30"])
     if os.environ.get("TG_SETUPS"):
         c["enabled_setups"] = [s.strip() for s in os.environ["TG_SETUPS"].split(",") if s.strip()]
     if os.environ.get("TG_BALANCE"):
