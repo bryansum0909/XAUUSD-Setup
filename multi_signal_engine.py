@@ -18,7 +18,7 @@ from src import filters as flt
 from signal_engine import lot_for_risk
 
 ATR_P, SL_MULT, RR, N = 14, 1.5, 1.5, 40
-SETUP_KEYS = ["DONCH_H4", "MACD_H4", "PSAR", "KELT_M1"]
+SETUP_KEYS = ["DONCH_H4", "MACD_H4", "PSAR", "KELT_M1", "DONCH_M1"]
 
 
 def _fresh_donchian(df, n=N):
@@ -117,13 +117,25 @@ def evaluate_all(df: pd.DataFrame, *, dxy_close=None, balance=10000.0, risk_pct=
     if p:
         out.append(_make("PSAR", "Parabolic SAR", p, df, sl_dist, tp15, lot15, balance, risk_pct, atr, RR))
 
-    # --- PATENTED Method #1: Keltner LONG + Daily + Weekly + Dollar regime, RR 1:3 ---
+    # --- Method #1: Keltner LONG + Daily + Weekly + Dollar regime + ADX<25, RR 1:3 ---
+    # ADX<25 filter (validated 6/6 bases: only take breakouts before the trend is overextended)
     k = _fresh_keltner_long(df)
     if k == "BUY":
         d1 = _trend(df, "D1", 50, 200)
         wk = _trend(df, "W", 20, 50)
-        if d1 == 1 and wk == 1 and dollar_weak(dxy_close):
+        adx14 = ind.adx(df, 14)[0].iloc[-1]
+        adx_ok = np.isfinite(adx14) and adx14 < 25
+        if d1 == 1 and wk == 1 and adx_ok and dollar_weak(dxy_close):
             tp3 = 3.0 * sl_dist
-            out.append(_make("KELT_M1", "Method#1 Keltner LONG (RR1:3, DXY-gate)", "BUY",
+            out.append(_make("KELT_M1", "Method#1+ Keltner LONG (RR1:3, DXY+ADX<25 gate)", "BUY",
                              df, sl_dist, tp3, lot_for(sl_dist), balance, risk_pct, atr, 3.0))
+
+    # --- DONCH_M1: 2nd robust breakout (Donchian-50) — same edge filters, adds frequency ---
+    dk = _fresh_donchian(df, 50)
+    if dk == "BUY":
+        d1 = _trend(df, "D1", 50, 200); wk = _trend(df, "W", 20, 50)
+        adx14 = ind.adx(df, 14)[0].iloc[-1]
+        if d1 == 1 and wk == 1 and np.isfinite(adx14) and adx14 < 25 and dollar_weak(dxy_close):
+            out.append(_make("DONCH_M1", "Donchian-50 LONG (RR1:3, DXY+ADX<25 gate)", "BUY",
+                             df, sl_dist, 3.0 * sl_dist, lot_for(sl_dist), balance, risk_pct, atr, 3.0))
     return out

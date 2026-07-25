@@ -44,3 +44,10 @@ def atr_contraction_mask(base_df: pd.DataFrame, n: int = 14, lookback: int = 100
     a = ind.atr(base_df, n)
     med = a.rolling(lookback, min_periods=lookback).median()
     return (a < med).fillna(False)
+
+
+def body_mask(base_df: pd.DataFrame, thr: float = 1.0, n: int = 14) -> pd.Series:
+    """True where the bar's candle body is >= thr x ATR (a decisive move, not a false break)."""
+    a = ind.atr(base_df, n)
+    body = (base_df["close"] - base_df["open"]).abs() / a
+    return (body >= thr).fillna(False)

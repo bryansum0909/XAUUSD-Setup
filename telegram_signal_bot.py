@@ -47,11 +47,11 @@ def load_cfg():
     c["bot_token"] = os.environ.get("TG_BOT_TOKEN") or c.get("bot_token", "")
     c["chat_id"] = os.environ.get("TG_CHAT_ID") or c.get("chat_id", "")
     c.setdefault("balance", 10000.0)
-    c.setdefault("risk_pct", 0.5)
+    c.setdefault("risk_pct", 2.0)   # user-set 2% per trade (lot sizing)
     c.setdefault("source", "dukascopy")   # 'dukascopy' (spot, matches backtest) | 'yahoo' | 'parquet'
     c.setdefault("n", 40); c.setdefault("rr", 1.5); c.setdefault("max_hold", 300)
     # which setups to send. Drop "PSAR" (noisy) or keep KELT_M1 (patented RR1:3) as you like.
-    c.setdefault("enabled_setups", ["DONCH_H4", "MACD_H4", "PSAR", "KELT_M1"])
+    c.setdefault("enabled_setups", ["DONCH_H4", "MACD_H4", "PSAR", "KELT_M1", "DONCH_M1"])
     if os.environ.get("TG_SETUPS"):
         c["enabled_setups"] = [s.strip() for s in os.environ["TG_SETUPS"].split(",") if s.strip()]
     if os.environ.get("TG_BALANCE"):
@@ -192,6 +192,7 @@ def replay(cfg, n_bars=800):
     _, kelt_up, _ = ind.keltner(df, 20, 2.0)
     d1 = flt.htf_trend(df, "D1", 50, 200).to_numpy()
     wk = flt.htf_trend(df, "W", 20, 50).to_numpy()
+    adxv = ind.adx(df, 14)[0].to_numpy()
     keltv = kelt_up.to_numpy()
     dxy = pd.read_parquet(os.path.join(PROC, "DXY_daily.parquet"))["close"]
     dxy = dxy[~dxy.index.duplicated()].sort_index()
@@ -240,8 +241,9 @@ def replay(cfg, n_bars=800):
         if mm and ((mm == "BUY" and h4[i] == 1) or (mm == "SELL" and h4[i] == -1)): cand["MACD_H4"] = mm
         pp = psar(i)
         if pp: cand["PSAR"] = pp
-        # Method #1: Keltner LONG breakout + Daily up + Weekly up + dollar weak (RR 1:3)
-        if (cv[i] > keltv[i] and cv[i-1] <= keltv[i-1] and d1[i] == 1 and wk[i] == 1 and dxy_mask[i]):
+        # Method #1: Keltner LONG breakout + Daily up + Weekly up + dollar weak + ADX<25 (RR 1:3)
+        if (cv[i] > keltv[i] and cv[i-1] <= keltv[i-1] and d1[i] == 1 and wk[i] == 1
+                and dxy_mask[i] and np.isfinite(adxv[i]) and adxv[i] < 25):
             cand["KELT_M1"] = "BUY"
         for k, dirn in cand.items():
             if pos[k] is None:

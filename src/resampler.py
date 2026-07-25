@@ -5,7 +5,7 @@ This keeps the bar's CLOSE aligned to information available at the bar's end.
 from __future__ import annotations
 import pandas as pd
 
-_RULE = {"M1": "1min", "M5": "5min", "M15": "15min", "M30": "30min",
+_RULE = {"M1": "1min", "M5": "5min", "M10": "10min", "M15": "15min", "M30": "30min",
          "H1": "1h", "H4": "4h", "D1": "1D", "W": "1W"}
 
 
