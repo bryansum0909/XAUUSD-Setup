@@ -104,6 +104,9 @@ def format_msg(sig: dict) -> str:
 def send_telegram(token: str, chat_id: str, text: str):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     r = requests.post(url, data={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=20)
+    if not r.ok:
+        # surface Telegram's exact 'description' (e.g. chat not found / can't parse entities)
+        print(f"Telegram API {r.status_code}: {r.text}")
     r.raise_for_status()
     return r.json()
 
