@@ -141,6 +141,25 @@ def evaluate_all(df: pd.DataFrame, *, dxy_close=None, balance=10000.0, risk_pct=
     return out
 
 
+def ma_m30_status(df_m30: pd.DataFrame):
+    """M30 EMA50/200 golden-cross TREND-POSITION strategy (validated: +119%, PF 2.18, RR~4.4,
+    WR 32%, DD 15.8%, ~0.6 trades/wk over 5y). Long while EMA50>EMA200, exit on death cross —
+    NOT an RR-1:3 trade. Returns the current long/flat STATE so the bot alerts on cross flips."""
+    df_m30 = df_m30[~df_m30.index.duplicated()].sort_index()
+    if len(df_m30) < 210:
+        return None
+    c = df_m30["close"]
+    e50 = ind.ema(c, 50).iloc[-1]
+    e200 = ind.ema(c, 200).iloc[-1]
+    if not (np.isfinite(e50) and np.isfinite(e200)):
+        return None
+    atr = ind.atr(df_m30, 14).iloc[-1]
+    return {"long": bool(e50 > e200), "close": float(c.iloc[-1]),
+            "ema50": round(float(e50), 2), "ema200": round(float(e200), 2),
+            "atr": round(float(atr), 2) if np.isfinite(atr) else None,
+            "bar_time": str(df_m30.index[-1])}
+
+
 def regime_status(df_h1: pd.DataFrame, dxy_close=None) -> dict:
     """The gate that BOTH Method #1 family AND ORB_M15 require: uptrend + weak dollar.
     Returns a dict the bot uses to (a) gate signals and (b) alert on regime flips."""

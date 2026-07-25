@@ -51,7 +51,7 @@ def load_cfg():
     c.setdefault("source", "dukascopy")   # 'dukascopy' (spot, matches backtest) | 'yahoo' | 'parquet'
     c.setdefault("n", 40); c.setdefault("rr", 1.5); c.setdefault("max_hold", 300)
     # which setups to send. Drop "PSAR" (noisy) or keep KELT_M1 (patented RR1:3) as you like.
-    c.setdefault("enabled_setups", ["DONCH_H4", "MACD_H4", "PSAR", "KELT_M1", "DONCH_M1", "ORB_M15"])
+    c.setdefault("enabled_setups", ["DONCH_H4", "MACD_H4", "PSAR", "KELT_M1", "DONCH_M1", "ORB_M15", "MA_M30"])
     if os.environ.get("TG_SETUPS"):
         c["enabled_setups"] = [s.strip() for s in os.environ["TG_SETUPS"].split(",") if s.strip()]
     if os.environ.get("TG_BALANCE"):
@@ -80,6 +80,40 @@ def get_m15(lookback_days: int = 55) -> pd.DataFrame:
     """M15 bars for ORB_M15 (Yahoo caps 15m history at ~60 days — enough for today's OR)."""
     df = dl.fetch_yahoo("GC=F", interval="15m", range_=f"{lookback_days}d")
     return df[~df.index.duplicated()].sort_index()
+
+
+def get_m30(lookback_days: int = 58) -> pd.DataFrame:
+    """M30 bars for MA_M30 golden cross (needs ~200 bars for EMA200 — 58d gives ~2800)."""
+    df = dl.fetch_yahoo("GC=F", interval="30m", range_=f"{lookback_days}d")
+    return df[~df.index.duplicated()].sort_index()
+
+
+def format_ma_m30(s: dict, event: str) -> str:
+    """event: 'GOLDEN' (enter long) or 'DEATH' (exit)."""
+    if event == "GOLDEN":
+        stop = round(s["close"] - 3 * s["atr"], 2) if s.get("atr") else "-"
+        return (
+            f"<b>🟢 GOLDEN CROSS M30 — MASUK LONG XAUUSD</b>\n"
+            f"📊 Setup: <b>MA_M30</b> (EMA50 potong ke ATAS EMA200)\n"
+            f"🕒 Bar M30: {s['bar_time']} UTC\n"
+            f"———————————————\n"
+            f"➡️ <b>Entry</b>: ~{s['close']} (market)\n"
+            f"📈 EMA50 {s['ema50']} &gt; EMA200 {s['ema200']}\n"
+            f"🛑 <b>Stop pengaman</b>: ~{stop} (3×ATR — hanya jaring pengaman)\n"
+            f"🚪 <b>Exit utama</b>: saat DEATH CROSS (EMA50 balik di bawah EMA200), BUKAN TP tetap\n"
+            f"———————————————\n"
+            f"⏳ Ini POSISI-TREN — tahan berhari-hari, biarkan profit berjalan (RR efektif ~4,4, WR ~32%).\n"
+            f"⚠️ DEMO/manual. Backtest ≠ hasil masa depan."
+        )
+    return (
+        f"<b>🔴 DEATH CROSS M30 — KELUAR LONG XAUUSD</b>\n"
+        f"📊 Setup: <b>MA_M30</b> (EMA50 potong ke BAWAH EMA200)\n"
+        f"🕒 Bar M30: {s['bar_time']} UTC\n"
+        f"———————————————\n"
+        f"🚪 <b>Tutup posisi MA_M30</b> di ~{s['close']}.\n"
+        f"📉 EMA50 {s['ema50']} &lt; EMA200 {s['ema200']}\n"
+        f"Tunggu golden cross berikutnya untuk masuk lagi."
+    )
 
 
 def format_msg(sig: dict) -> str:
@@ -211,6 +245,26 @@ def check_once(cfg, dry_run=False):
                 active[s["key"]] = s
         except Exception as e:
             print("ORB_M15 skipped:", e)
+
+    # --- MA_M30: trend-POSITION signal (golden cross enter / death cross exit), state-based ---
+    if "MA_M30" in enabled:
+        try:
+            sm = mse.ma_m30_status(get_m30())
+            if sm:
+                prev = state.get("ma_m30_long")
+                if prev is None:
+                    state["ma_m30_long"] = sm["long"]   # baseline on first run, no alert
+                elif sm["long"] != prev:
+                    event = "GOLDEN" if sm["long"] else "DEATH"
+                    mmsg = format_ma_m30(sm, event)
+                    if dry_run or not cfg["bot_token"] or not cfg["chat_id"]:
+                        print(f"--- MA_M30 {event} ---\n" + mmsg + "\n")
+                    else:
+                        send_telegram(cfg["bot_token"], cfg["chat_id"], mmsg)
+                        print(f"sent MA_M30 {event}")
+                    state["ma_m30_long"] = sm["long"]
+        except Exception as e:
+            print("MA_M30 skipped:", e)
 
     sent = 0
     for key in list(mse.SETUP_KEYS) + ["ORB_M15"]:
