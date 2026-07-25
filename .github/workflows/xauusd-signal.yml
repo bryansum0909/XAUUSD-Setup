@@ -1,0 +1,48 @@
+name: XAUUSD H1 Signal Bot
+
+# Runs on GitHub's servers every hour — your laptop can be OFF.
+on:
+  schedule:
+    - cron: "5 * * * *"      # every hour at :05 (after the H1 bar closes)
+  workflow_dispatch: {}       # lets you also run it manually from the Actions tab
+
+permissions:
+  contents: write             # so the bot can save its state between runs
+
+concurrency:
+  group: xauusd-signal
+  cancel-in-progress: false
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Check for a signal and alert Telegram
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID:   ${{ secrets.TG_CHAT_ID }}
+          TG_BALANCE:   ${{ secrets.TG_BALANCE }}   # optional
+          TG_RISK:      ${{ secrets.TG_RISK }}      # optional
+          TG_SOURCE:    ${{ secrets.TG_SOURCE }}    # optional: 'dukascopy' (default) or 'yahoo'
+        run: python telegram_signal_bot.py --once
+
+      - name: Save bot state (dedup between runs)
+        run: |
+          if [ -n "$(git status --porcelain telegram_bot_state.json)" ]; then
+            git config user.name "xauusd-signal-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add telegram_bot_state.json
+            git commit -m "update bot state [skip ci]"
+            git push
+          else
+            echo "no state change"
+          fi
