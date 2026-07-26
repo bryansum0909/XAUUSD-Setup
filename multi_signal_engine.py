@@ -141,6 +141,39 @@ def evaluate_all(df: pd.DataFrame, *, dxy_close=None, balance=10000.0, risk_pct=
     return out
 
 
+def evaluate_kelt_m10(df_m10: pd.DataFrame, df_h1: pd.DataFrame, *, dxy_close=None,
+                      balance=10000.0, risk_pct=1.0, round_lot_step=0.01):
+    """M10 Keltner-20x2.0 breakout LONG, RR 1:4 with a WIDE stop (SL 5xATR / TP 20xATR),
+    gated by ATR-expansion (volatility present) + the shared regime (Daily-trend + DXY-weak).
+
+    Validated (2023-2026, 203 trades, ~0.8/wk): WR 33.5%, PF 1.64, expectancy +0.427R,
+    MaxDD 12.8% @1% risk, worst loss-streak 13x, survives stress spread (PF 1.52).
+    Regime is read from the long H1 series (needs EMA200-daily warmup); the breakout and
+    ATR-expansion are read from the M10 bars."""
+    if df_m10 is None or len(df_m10) < 130:      # need 100-bar ATR median + Keltner warmup
+        return []
+    df_m10 = df_m10[~df_m10.index.duplicated()].sort_index()
+    st = regime_status(df_h1, dxy_close)
+    if not (st["daily_up"] and st["dxy_weak"]):   # the validated gate (no weekly/ADX here)
+        return []
+    # fresh Keltner-20x2.0 upper-band cross on M10
+    _, up, _ = ind.keltner(df_m10, 20, 2.0)
+    c, cp = df_m10["close"].iloc[-1], df_m10["close"].iloc[-2]
+    if not (c > up.iloc[-1] and cp <= up.iloc[-2]):
+        return []
+    # ATR-expansion filter: ATR(14) above its own 100-bar median
+    a = ind.atr(df_m10, 14)
+    med = a.rolling(100, min_periods=100).median().iloc[-1]
+    atr = a.iloc[-1]
+    if not (np.isfinite(atr) and np.isfinite(med) and atr > med and atr > 0):
+        return []
+    sl_dist = 5.0 * float(atr)
+    L = lot_for_risk(balance, risk_pct, sl_dist)
+    lot = max(round_lot_step, np.floor(L / round_lot_step) * round_lot_step)
+    return [_make("KELT_M10", "Keltner M10 LONG (RR1:4, SL5xATR, ATRexp+D1+DXY)", "BUY",
+                  df_m10, sl_dist, 4.0 * sl_dist, lot, balance, risk_pct, atr, 4.0)]
+
+
 def ma_m30_status(df_m30: pd.DataFrame):
     """M30 EMA50/200 golden-cross TREND-POSITION strategy (validated: +119%, PF 2.18, RR~4.4,
     WR 32%, DD 15.8%, ~0.6 trades/wk over 5y). Long while EMA50>EMA200, exit on death cross —

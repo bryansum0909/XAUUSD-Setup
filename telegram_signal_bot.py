@@ -52,7 +52,7 @@ def load_cfg():
     c.setdefault("n", 40); c.setdefault("rr", 1.5); c.setdefault("max_hold", 300)
     # which setups to send. Drop "PSAR" (noisy) or keep KELT_M1 (patented RR1:3) as you like.
     # focus on the 4 validated main methods; old basket (DONCH_H4/MACD_H4/PSAR) disabled
-    c.setdefault("enabled_setups", ["KELT_M1", "DONCH_M1", "ORB_M15", "MA_M30", "TREND_M30"])
+    c.setdefault("enabled_setups", ["KELT_M1", "DONCH_M1", "ORB_M15", "KELT_M10", "MA_M30", "TREND_M30"])
     if os.environ.get("TG_SETUPS"):
         c["enabled_setups"] = [s.strip() for s in os.environ["TG_SETUPS"].split(",") if s.strip()]
     if os.environ.get("TG_BALANCE"):
@@ -81,6 +81,13 @@ def get_m15(lookback_days: int = 55) -> pd.DataFrame:
     """M15 bars for ORB_M15 (Yahoo caps 15m history at ~60 days — enough for today's OR)."""
     df = dl.fetch_yahoo("GC=F", interval="15m", range_=f"{lookback_days}d")
     return df[~df.index.duplicated()].sort_index()
+
+
+def get_m10(lookback_days: int = 55) -> pd.DataFrame:
+    """M10 bars for KELT_M10. Yahoo has no 10m interval -> fetch 5m and resample."""
+    df = dl.fetch_yahoo("GC=F", interval="5m", range_=f"{lookback_days}d")
+    df = df[~df.index.duplicated()].sort_index()
+    return resample_ohlc(df, "M10")
 
 
 def get_m30(lookback_days: int = 58) -> pd.DataFrame:
@@ -147,7 +154,7 @@ def format_trend_m30(s: dict, event: str) -> str:
 
 def format_msg(sig: dict) -> str:
     arrow = "🟢 BUY" if sig["signal"] == "BUY" else "🔴 SELL"
-    tf = "M15" if sig.get("key") == "ORB_M15" else "H1"
+    tf = {"ORB_M15": "M15", "KELT_M10": "M10"}.get(sig.get("key"), "H1")
     return (
         f"<b>XAUUSD {tf} — {arrow}</b>\n"
         f"📊 Setup: <b>{sig['setup']}</b>\n"
@@ -276,6 +283,16 @@ def check_once(cfg, dry_run=False):
         except Exception as e:
             print("ORB_M15 skipped:", e)
 
+    # --- KELT_M10 (RR 1:4, wide stop; breakout+ATRexp from M10, regime from H1) ---
+    if "KELT_M10" in enabled:
+        try:
+            m10 = get_m10()
+            for s in mse.evaluate_kelt_m10(m10, df, dxy_close=dxy,
+                                           balance=cfg["balance"], risk_pct=cfg["risk_pct"]):
+                active[s["key"]] = s
+        except Exception as e:
+            print("KELT_M10 skipped:", e)
+
     # --- M30 trend-POSITION signals (state-based enter/exit; fetch M30 once) ---
     def _position_flip(status, state_key, fmt, enter_ev, exit_ev):
         if not status:
@@ -305,7 +322,7 @@ def check_once(cfg, dry_run=False):
                 _position_flip(mse.trend_m30f_status(m30), "trend_m30f_long", format_trend_m30, "ENTER", "EXIT")
 
     sent = 0
-    for key in list(mse.SETUP_KEYS) + ["ORB_M15"]:
+    for key in list(mse.SETUP_KEYS) + ["ORB_M15", "KELT_M10"]:
         if key not in enabled:
             continue
         pos = positions.get(key)
