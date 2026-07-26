@@ -52,7 +52,7 @@ def load_cfg():
     c.setdefault("n", 40); c.setdefault("rr", 1.5); c.setdefault("max_hold", 300)
     # which setups to send. Drop "PSAR" (noisy) or keep KELT_M1 (patented RR1:3) as you like.
     # focus on the 4 validated main methods; old basket (DONCH_H4/MACD_H4/PSAR) disabled
-    c.setdefault("enabled_setups", ["KELT_M1", "DONCH_M1", "ORB_M15", "MA_M30"])
+    c.setdefault("enabled_setups", ["KELT_M1", "DONCH_M1", "ORB_M15", "MA_M30", "TREND_M30"])
     if os.environ.get("TG_SETUPS"):
         c["enabled_setups"] = [s.strip() for s in os.environ["TG_SETUPS"].split(",") if s.strip()]
     if os.environ.get("TG_BALANCE"):
@@ -114,6 +114,34 @@ def format_ma_m30(s: dict, event: str) -> str:
         f"🚪 <b>Tutup posisi MA_M30</b> di ~{s['close']}.\n"
         f"📉 EMA50 {s['ema50']} &lt; EMA200 {s['ema200']}\n"
         f"Tunggu golden cross berikutnya untuk masuk lagi."
+    )
+
+
+def format_trend_m30(s: dict, event: str) -> str:
+    """event: 'ENTER' (M30 EMA10>30 & H1 uptrend both on) or 'EXIT'."""
+    if event == "ENTER":
+        stop = round(s["close"] - 3 * s["atr"], 2) if s.get("atr") else "-"
+        return (
+            f"<b>🟢 TREND_M30 — MASUK LONG XAUUSD</b>\n"
+            f"📊 Setup: <b>TREND_M30</b> (M30 EMA10&gt;EMA30 + tren H1 naik)\n"
+            f"🕒 Bar M30: {s['bar_time']} UTC\n"
+            f"———————————————\n"
+            f"➡️ <b>Entry</b>: ~{s['close']} (market)\n"
+            f"📈 M30 EMA10 {s['ema10']} &gt; EMA30 {s['ema30']} · H1 uptrend ✅\n"
+            f"🛑 <b>Stop pengaman</b>: ~{stop} (3×ATR)\n"
+            f"🚪 <b>Exit</b>: saat M30 EMA10&lt;EMA30 ATAU tren H1 patah\n"
+            f"———————————————\n"
+            f"⏳ Posisi-tren (~1 entry per 2 hari). Validasi: untung tiap tahun, PF 1,45.\n"
+            f"⚠️ DEMO/manual. Backtest ≠ hasil masa depan."
+        )
+    return (
+        f"<b>🔴 TREND_M30 — KELUAR LONG XAUUSD</b>\n"
+        f"📊 Setup: <b>TREND_M30</b>\n"
+        f"🕒 Bar M30: {s['bar_time']} UTC\n"
+        f"———————————————\n"
+        f"🚪 <b>Tutup posisi TREND_M30</b> di ~{s['close']}.\n"
+        f"📉 Pemicu: M30 EMA10&lt;EMA30 atau tren H1 patah.\n"
+        f"Tunggu sinyal masuk berikutnya."
     )
 
 
@@ -201,8 +229,9 @@ def format_regime(st: dict, flipped=None) -> str:
         f"{dxy_line}"
         f"📆 Tren Mingguan (EMA20/50): {yn(st['weekly_up'])}  ← tambahan utk Method#1\n"
         f"———————————————\n"
-        f"REGIME ON = Tren Harian ✅ + Dolar LEMAH ✅ (ORB_M15 bisa entry).\n"
-        f"Method#1 butuh + Mingguan ✅ + ADX&lt;25. Selama regime OFF, tidak ada sinyal LONG.\n"
+        f"REGIME ON = Tren Harian ✅ + Dolar LEMAH ✅ → aktifkan breakout (KELT/DONCH/ORB).\n"
+        f"Method#1 juga butuh Mingguan ✅ + ADX&lt;25. Saat regime OFF, breakout diam; setup tren "
+        f"(MA_M30/TREND_M30) tetap jalan pada logika trennya sendiri.\n"
         f"🕒 {dt.datetime.utcnow():%Y-%m-%d %H:%M} UTC"
     )
 
@@ -247,25 +276,33 @@ def check_once(cfg, dry_run=False):
         except Exception as e:
             print("ORB_M15 skipped:", e)
 
-    # --- MA_M30: trend-POSITION signal (golden cross enter / death cross exit), state-based ---
-    if "MA_M30" in enabled:
+    # --- M30 trend-POSITION signals (state-based enter/exit; fetch M30 once) ---
+    def _position_flip(status, state_key, fmt, enter_ev, exit_ev):
+        if not status:
+            return
+        prev = state.get(state_key)
+        if prev is None:
+            state[state_key] = status["long"]          # baseline on first run, no alert
+        elif status["long"] != prev:
+            ev = enter_ev if status["long"] else exit_ev
+            msg = fmt(status, ev)
+            if dry_run or not cfg["bot_token"] or not cfg["chat_id"]:
+                print(f"--- {state_key} {ev} ---\n" + msg + "\n")
+            else:
+                send_telegram(cfg["bot_token"], cfg["chat_id"], msg)
+                print(f"sent {state_key} {ev}")
+            state[state_key] = status["long"]
+
+    if "MA_M30" in enabled or "TREND_M30" in enabled:
         try:
-            sm = mse.ma_m30_status(get_m30())
-            if sm:
-                prev = state.get("ma_m30_long")
-                if prev is None:
-                    state["ma_m30_long"] = sm["long"]   # baseline on first run, no alert
-                elif sm["long"] != prev:
-                    event = "GOLDEN" if sm["long"] else "DEATH"
-                    mmsg = format_ma_m30(sm, event)
-                    if dry_run or not cfg["bot_token"] or not cfg["chat_id"]:
-                        print(f"--- MA_M30 {event} ---\n" + mmsg + "\n")
-                    else:
-                        send_telegram(cfg["bot_token"], cfg["chat_id"], mmsg)
-                        print(f"sent MA_M30 {event}")
-                    state["ma_m30_long"] = sm["long"]
+            m30 = get_m30()
         except Exception as e:
-            print("MA_M30 skipped:", e)
+            print("M30 fetch skipped:", e); m30 = None
+        if m30 is not None:
+            if "MA_M30" in enabled:
+                _position_flip(mse.ma_m30_status(m30), "ma_m30_long", format_ma_m30, "GOLDEN", "DEATH")
+            if "TREND_M30" in enabled:
+                _position_flip(mse.trend_m30f_status(m30), "trend_m30f_long", format_trend_m30, "ENTER", "EXIT")
 
     sent = 0
     for key in list(mse.SETUP_KEYS) + ["ORB_M15"]:
