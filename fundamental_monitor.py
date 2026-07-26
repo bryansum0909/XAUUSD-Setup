@@ -143,9 +143,10 @@ def main():
         try:
             import telegram_signal_bot as bot
             cfg = bot.load_cfg()
+            import html
             emoji = {"BULLISH": "🟢", "BEARISH": "🔴", "NEUTRAL": "🟡"}.get(o["regime"], "⚪")
             head = "GOLD SNAPSHOT MINGGUAN" if weekly else "GOLD FUNDAMENTAL"
-            msg = f"{emoji} <b>{head}: {o['regime']}</b>\n<pre>{txt}</pre>"
+            msg = f"{emoji} <b>{head}: {o['regime']}</b>\n<pre>{html.escape(txt)}</pre>"  # escape <,>,& in body
             if cfg["bot_token"] and cfg["chat_id"]:
                 bot.send_telegram(cfg["bot_token"], cfg["chat_id"], msg); print("\n[sent to Telegram]")
             else:
