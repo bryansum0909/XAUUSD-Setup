@@ -46,7 +46,7 @@ def yh(sym, rng="400d"):
 
 
 def build():
-    out = {"as_of": dt.date(2026, 7, 25).isoformat(), "signals": [], "errors": []}
+    out = {"as_of": dt.datetime.utcnow().date().isoformat(), "signals": [], "errors": []}
     # DXY
     dxy = yh("DX-Y.NYB")
     dxy_sma100 = dxy.rolling(100).mean().iloc[-1]
@@ -79,6 +79,7 @@ def build():
         s5 = gold.iloc[-1] > ma200
         s6 = ma50 > ma200
         out["gold"] = round(float(gold.iloc[-1]), 1)
+        out["gold_ma50"] = round(float(ma50), 1); out["gold_ma200"] = round(float(ma200), 1)
         out["signals"] += [("Gold above 200-day MA", bool(s5), f"{gold.iloc[-1]:.0f} vs {ma200:.0f}"),
                             ("Gold 50DMA > 200DMA (golden)", bool(s6), f"{ma50:.0f} vs {ma200:.0f}")]
     except Exception as e:
@@ -96,23 +97,45 @@ def build():
     return out
 
 
-def render(o):
-    L = [f"GOLD FUNDAMENTAL REGIME — {o['as_of']}",
-         f"Verdict: {o['regime']}  ({o['bullish_signals']}/{o['total_signals']} sinyal bullish)",
-         f"Method #1 DXY-gate: {o['gate_method1']}", "-" * 40]
+def render(o, weekly=False):
+    L = []
+    if weekly:
+        L.append("SNAPSHOT MINGGUAN — status gerbang & timing")
+    L += [f"GOLD FUNDAMENTAL REGIME — {o['as_of']}",
+          f"Verdict: {o['regime']}  ({o['bullish_signals']}/{o['total_signals']} sinyal bullish)",
+          f"Method #1 DXY-gate: {o['gate_method1']}", "-" * 40]
     for name, ok, detail in o["signals"]:
         L.append(f"  [{'BULL' if ok else 'bear'}] {name}  ({detail})")
+    # --- JARAK KE FLIP: the two objective bot gates ---
+    L.append("-" * 40)
+    L.append("JARAK KE FLIP (gerbang bot):")
+    dxy, sma = o.get("dxy"), o.get("dxy_sma100")
+    if dxy is not None and sma is not None:
+        pct = (dxy / sma - 1) * 100
+        st = "LEMAH (OK)" if dxy < sma else f"KUAT, perlu -{pct:.1f}%"
+        L.append(f"  #1 Dolar: DXY {dxy} vs SMA100 {sma}  -> {st}")
+    m50, m200 = o.get("gold_ma50"), o.get("gold_ma200")
+    if m50 is not None and m200 is not None:
+        pct = (m50 / m200 - 1) * 100
+        st = "UPTREND (OK)" if m50 > m200 else f"DOWNTREND, perlu +{-pct:.1f}%"
+        L.append(f"  #2 Tren: 50DMA {m50} vs 200DMA {m200}  -> {st}")
+    regime_on = (dxy is not None and sma is not None and dxy < sma) and (m50 is not None and m200 is not None and m50 > m200)
+    L.append(f"  REGIME (butuh keduanya): {'ON' if regime_on else 'OFF — menunggu'}")
     if o.get("errors"):
         L.append("errors: " + "; ".join(o["errors"]))
     L.append("-" * 40)
-    L.append("Pemicu balik ke BULLISH: DXY tembus < 100-SMA, real yield turun < 2%, emas di atas 200DMA.")
-    L.append("Riset/edukasi. Bukan saran keuangan.")
+    if weekly:
+        L.append("Hipotesis base-case: bottom ~Q4-2026, uptrend resume ~H1-2027, gated pada")
+        L.append("urutan Iran/minyak -> inflasi turun -> Fed pivot ke cut -> dolar melemah.")
+    L.append("Pemicu balik BULLISH: DXY < SMA100, real yield turun < 2%, emas 50DMA>200DMA.")
+    L.append("Riset/edukasi skenario. BUKAN saran keuangan / prediksi harga.")
     return "\n".join(L)
 
 
 def main():
+    weekly = "--weekly" in sys.argv
     o = build()
-    txt = render(o)
+    txt = render(o, weekly=weekly)
     print(txt)
     os.makedirs(os.path.join(ROOT, "results", "reports"), exist_ok=True)
     json.dump(o, open(os.path.join(ROOT, "results", "reports", "fundamental_regime.json"), "w"), indent=2)
@@ -121,7 +144,8 @@ def main():
             import telegram_signal_bot as bot
             cfg = bot.load_cfg()
             emoji = {"BULLISH": "🟢", "BEARISH": "🔴", "NEUTRAL": "🟡"}.get(o["regime"], "⚪")
-            msg = f"{emoji} <b>GOLD FUNDAMENTAL: {o['regime']}</b>\n<pre>{txt}</pre>"
+            head = "GOLD SNAPSHOT MINGGUAN" if weekly else "GOLD FUNDAMENTAL"
+            msg = f"{emoji} <b>{head}: {o['regime']}</b>\n<pre>{txt}</pre>"
             if cfg["bot_token"] and cfg["chat_id"]:
                 bot.send_telegram(cfg["bot_token"], cfg["chat_id"], msg); print("\n[sent to Telegram]")
             else:

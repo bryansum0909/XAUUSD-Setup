@@ -1,0 +1,24 @@
+name: Gold Regime Weekly Snapshot
+
+# Weekly (Mondays) quantitative gate + timing snapshot to Telegram — the cloud (no-laptop)
+# companion to the app-based multi-agent research routine. Sends: DXY vs SMA100 + gold
+# 50/200 gate status, distance-to-flip, and the base-case uptrend-timing hypothesis line.
+on:
+  schedule:
+    - cron: "0 0 * * 1"       # Mondays 00:00 UTC (= 08:00 GMT+8)
+  workflow_dispatch: {}       # also run manually from the Actions tab
+
+jobs:
+  weekly-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Send weekly gate + timing snapshot to Telegram
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID:   ${{ secrets.TG_CHAT_ID }}
+        run: python fundamental_monitor.py --telegram --weekly

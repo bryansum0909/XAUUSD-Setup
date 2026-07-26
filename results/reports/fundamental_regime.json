@@ -1,0 +1,43 @@
+{
+  "as_of": "2026-07-26",
+  "signals": [
+    [
+      "DXY < 100-day SMA (dollar weak)",
+      false,
+      "101.5 vs 99.6"
+    ],
+    [
+      "DXY falling (20d)",
+      false,
+      "101.5 vs 101.4 20d ago"
+    ],
+    [
+      "US 10Y yield falling (20d)",
+      false,
+      "4.68 vs 4.39 20d ago"
+    ],
+    [
+      "Gold above 200-day MA",
+      false,
+      "4068 vs 4478"
+    ],
+    [
+      "Gold 50DMA > 200DMA (golden)",
+      false,
+      "4255 vs 4478"
+    ]
+  ],
+  "errors": [
+    "FRED real yield (optional): HTTPSConnectionPool(host='fred.stlouisfed.org', po"
+  ],
+  "dxy": 101.47,
+  "dxy_sma100": 99.62,
+  "us10y": 4.679,
+  "gold": 4067.6,
+  "gold_ma50": 4254.8,
+  "gold_ma200": 4478.3,
+  "bullish_signals": 0,
+  "total_signals": 5,
+  "regime": "BEARISH",
+  "gate_method1": "OFF (sit out)"
+}
