@@ -9,12 +9,16 @@ Angelfing Confirmation\\xauusd-backtest, lihat CLAUDE.md di sana):
   * Entry = open bar berikutnya (praktik: market order saat alert masih segar).
     SL 1.5xATR(14), TP 1.5R. Konservatif: SL & TP di bar sama = loss.
 
-Angka jujur (Dukascopy spot, logika KAUSAL identik dengan file ini):
-  * OOS 2026 Jan-14 Jul: 132 trade, WR 50.0%, +30.7R, PF 1.46, maxLossRun 5.
-    Short PF 1.58 (tahun bearish), long PF 1.31. Semua bulan positif.
-  * 2024-2025 (sideways/campuran): 641 trade, PF 1.00 = IMPAS.
+Angka jujur (logika KAUSAL identik dengan file ini; SL 1.5xATR di keduanya):
+  * TP1 = 1.5R: 2026 Jan-14Jul PF 1.46 +30.7R (132 trade, WR 50%, streak<=5);
+    2025 PF 1.06; 2024 PF 0.93; 2023 PF 0.79. Unggul di rezim bear-cepat 2026.
+  * TP2 = 3R (TP 4.5xATR): 2025 PF 1.20 +42.2R; 2024 PF 1.02; 2023 PF 0.94;
+    2026 PF 1.18. Satu-satunya positif full 3.5 th (+50R, PF 1.07) TAPI WR ~28%
+    dan loss beruntun 10-14x. Pesan menampilkan KEDUA TP - pilih sesuai rezim.
   -> Edge hanya hidup saat pasar TRENDING. Pantau "Gold fundamental watch";
      saat ranging, harapkan hasil impas minus biaya.
+  * Dedup posisi memakai TP1 (siklus tercepat): sinyal baru bisa muncul saat
+    posisi TP2 masih terbuka - sesuaikan dengan posisimu sendiri.
 
 Live data = Yahoo GC=F 5m (futures, proxy spot; terapkan JARAK SL/TP ke harga
 broker). Kuota Yahoo 5m ~60 hari; kita ambil 30 hari (cukup warmup EMA/median).
@@ -46,7 +50,8 @@ def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
 SESSION_UTC = (8.0, 16.5)      # 03:00-11:30 EST (GMT-5 tanpa DST) dalam UTC
-ATR_P, AMED_N, SL_MULT, RR = 14, 288, 1.5, 1.5
+ATR_P, AMED_N, SL_MULT = 14, 288, 1.5
+RR1, RR2 = 1.5, 3.0            # dua pilihan TP di satu pesan; dedup pakai TP1
 FRESH_MIN = float(os.environ.get("ANGELFING_FRESH_MIN", 20))   # menit; sinyal lebih tua di-skip
 MAX_HOLD_M5 = 1440             # jaring pengaman state: anggap selesai setelah ~5 hari
 
@@ -103,15 +108,19 @@ def evaluate_last_bar(df: pd.DataFrame, *, balance: float, risk_pct: float,
         return None
     entry = float(m["close"].iloc[-1])
     sl_dist = SL_MULT * atr
-    tp_dist = RR * sl_dist
-    sl = entry - sl_dist if direction == "BUY" else entry + sl_dist
-    tp = entry + tp_dist if direction == "BUY" else entry - tp_dist
+    d = 1 if direction == "BUY" else -1
+    sl = entry - d * sl_dist
+    tp1 = entry + d * RR1 * sl_dist
+    tp2 = entry + d * RR2 * sl_dist
     lot = lot_for_risk(balance, risk_pct, sl_dist)
     lot = max(round_lot_step, np.floor(lot / round_lot_step) * round_lot_step)
     return {"key": "ANGELFING_M5", "signal": direction, "bar_time": str(m.index[-1]),
-            "entry": round(entry, 2), "sl": round(sl, 2), "tp": round(tp, 2),
-            "sl_distance": round(sl_dist, 2), "tp_distance": round(tp_dist, 2),
-            "atr": round(atr, 2), "rr": RR, "lot": round(float(lot), 2),
+            "entry": round(entry, 2), "sl": round(sl, 2),
+            "tp": round(tp1, 2),                       # state dedup pakai TP1
+            "tp2": round(tp2, 2),
+            "sl_distance": round(sl_dist, 2),
+            "tp1_distance": round(RR1 * sl_dist, 2), "tp2_distance": round(RR2 * sl_dist, 2),
+            "atr": round(atr, 2), "lot": round(float(lot), 2),
             "risk_money": round(balance * risk_pct / 100.0, 2),
             "risk_actual": round(risk_for_lot(lot, sl_dist), 2),
             "risk_pct": risk_pct, "balance": balance}
@@ -120,7 +129,10 @@ def evaluate_last_bar(df: pd.DataFrame, *, balance: float, risk_pct: float,
 def format_msg(sig: dict, age_min: float) -> str:
     arrow = "🟢 BUY" if sig["signal"] == "BUY" else "🔴 SELL"
     tol = round(0.3 * sig["sl_distance"], 2)
-    lim = round(sig["entry"] + tol, 2) if sig["signal"] == "BUY" else round(sig["entry"] - tol, 2)
+    if sig["signal"] == "BUY":
+        lim = round(sig["entry"] + tol, 2); lim_txt = f"sudah DI ATAS {lim}"
+    else:
+        lim = round(sig["entry"] - tol, 2); lim_txt = f"sudah DI BAWAH {lim}"
     return (
         f"<b>XAUUSD M5 — {arrow} (ANGELFING)</b>\n"
         f"📊 Setup: <b>ANGELFING_M5</b> — engulfing + tren M15/M30 + sentuh EMA20 + ATR tinggi, sesi London\n"
@@ -128,15 +140,16 @@ def format_msg(sig: dict, age_min: float) -> str:
         f"———————————————\n"
         f"➡️ <b>Entry</b>: ~{sig['entry']} (market SEKARANG — sinyal M5 cepat basi)\n"
         f"🛑 <b>Stop Loss</b>: {sig['sl']}  (jarak {sig['sl_distance']} = 1.5×ATR)\n"
-        f"🎯 <b>Take Profit</b>: {sig['tp']}  (RR {sig['rr']}, jarak {sig['tp_distance']})\n"
+        f"🎯 <b>TP1</b>: {sig['tp']}  (RR 1.5 — unggul di rezim 2026: PF 1.46, WR 50%, streak ≤5)\n"
+        f"🎯 <b>TP2</b>: {sig['tp2']}  (RR 3 — konsisten antar tahun: +50R/3.5th, TAPI WR 28%, streak s/d 14)\n"
+        f"👉 Pilih SATU sesuai rezim Gold fundamental watch (tren kuat searah → TP2 layak; bear cepat/rebound → TP1)\n"
         f"📦 <b>Lot</b>: {sig['lot']}  (risk {sig['risk_pct']}% = ${sig['risk_money']} dari ${sig['balance']:.0f}; "
         f"risk riil setelah pembulatan ≈ ${sig['risk_actual']})\n"
         f"———————————————\n"
-        f"⏱️ ATURAN BASI: kalau harga BUY sudah di atas {lim} (SELL: di bawah {lim}) — <b>SKIP</b>, "
-        f"jarak ke TP sudah termakan.\n"
+        f"⏱️ ATURAN BASI: kalau harga {lim_txt} — <b>SKIP</b>, jarak ke TP sudah termakan.\n"
         f"⚠️ Harga = GC=F (futures). Terapkan JARAK SL/TP ke harga XAUUSD broker-mu.\n"
-        f"📉 Validasi jujur: OOS 2026 PF 1.46 (132 trade); 2024-25 sideways = impas → "
-        f"edge hanya saat TREN jelas (cek Gold fundamental watch).\n"
+        f"📉 Edge hanya saat TREN jelas; tahun sideways ≈ impas. Sinyal baru bisa datang "
+        f"saat posisi TP2 masih jalan — sesuaikan sendiri.\n"
         f"DEMO/manual. Backtest ≠ hasil masa depan."
     )
 
