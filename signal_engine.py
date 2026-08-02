@@ -12,11 +12,23 @@ Matches the backtested rules EXACTLY and lookahead-safe:
 Returns a dict describing the signal (or {'signal': None}).
 """
 from __future__ import annotations
+import os
 import numpy as np
 import pandas as pd
 from src import indicators as ind
 
-CONTRACT = 100.0   # 1 lot XAUUSD = 100 oz -> $1 move = $100 / lot
+# Ounces per 1.0 lot of the gold symbol you actually execute on. This MUST match
+# the broker account, and `balance` MUST be in the same currency the symbol's P&L
+# is denominated in (USD for both accounts below).
+#
+#   HFM cent account, XAUUSDc : 1.0    <- verified 2026-07-27 via mt5.symbol_info
+#   Standard account, XAUUSD  : 100.0
+#
+# Getting this wrong scales every position by 100x. It is doubly dangerous because
+# entering `balance` in cents (USC) instead of dollars introduces a second, equal
+# and opposite 100x error, so the two cancel and the output looks correct while
+# both inputs are wrong. Keep BOTH in USD.
+CONTRACT = float(os.environ.get("TG_CONTRACT_SIZE", 1.0))
 
 
 def lot_for_risk(balance: float, risk_pct: float, sl_distance: float) -> float:
@@ -25,6 +37,17 @@ def lot_for_risk(balance: float, risk_pct: float, sl_distance: float) -> float:
     risk_money = balance * risk_pct / 100.0
     loss_per_lot = sl_distance * CONTRACT
     return risk_money / loss_per_lot if loss_per_lot > 0 else 0.0
+
+
+def risk_for_lot(lot: float, sl_distance: float) -> float:
+    """Money actually at risk for a lot size, AFTER broker rounding.
+
+    lot_for_risk gives the ideal size; the caller then floors it to the broker's
+    volume_step and clamps it up to volume_min. On a small account that clamp can
+    push real risk well above the intended percentage, so report this, not the
+    intended figure.
+    """
+    return max(0.0, float(lot)) * CONTRACT * max(0.0, float(sl_distance))
 
 
 def evaluate(df_h1: pd.DataFrame, *, n=40, atr_period=14, sl_mult=1.5, rr=1.5,
