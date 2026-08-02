@@ -97,12 +97,21 @@ def get_m5(lookback_days: int = 30) -> pd.DataFrame:
     return df
 
 
-def evaluate_last_bar(df: pd.DataFrame, *, balance: float, risk_pct: float,
-                      round_lot_step: float = 0.01):
+def evaluate_recent(df: pd.DataFrame, *, balance: float, risk_pct: float,
+                    round_lot_step: float = 0.01):
+    """Sinyal TERBARU di seluruh riwayat (bar mana pun, bukan hanya bar terakhir).
+    Freshness dinilai oleh pemanggil. Penting: cron 15-menit + bar 5-menit berarti
+    bar sinyal yang close di antara dua run (menit :05/:10) BUKAN bar terakhir
+    saat run berikutnya — kalau hanya cek iloc[-1], 2 dari 3 bar sinyal bisa lolos."""
     L, S, m = signal_masks(df)
-    if len(m) < AMED_N + ATR_P + 5 or not (L.iloc[-1] or S.iloc[-1]):
+    if len(m) < AMED_N + ATR_P + 5:
         return None
-    direction = "BUY" if L.iloc[-1] else "SELL"
+    hits = m.index[(L | S).values]
+    if len(hits) == 0:
+        return None
+    ts = hits[-1]
+    direction = "BUY" if bool(L.loc[ts]) else "SELL"
+    m = m.loc[:ts]                      # nilai indikator & harga pada bar sinyal itu
     atr = float(m["atr"].iloc[-1])
     if not np.isfinite(atr) or atr <= 0:
         return None
@@ -212,8 +221,8 @@ def check_once(dry_run=False):
             print(f"posisi {pos['signal']} {pos['bar_time']} masih open -> tidak cari sinyal baru")
             return
 
-    # 2) sinyal di bar terakhir yang sudah close
-    sig = evaluate_last_bar(df, balance=balance, risk_pct=risk_pct)
+    # 2) sinyal terbaru di bar mana pun yang sudah close (freshness dicek di bawah)
+    sig = evaluate_recent(df, balance=balance, risk_pct=risk_pct)
     last_bar = str(df.index[-1])
     if sig is None:
         print(f"[{utcnow():%Y-%m-%d %H:%M} UTC] tidak ada sinyal | bar {last_bar}")
