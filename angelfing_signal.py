@@ -2,11 +2,13 @@
 
 Metode dari project "Angelfing Confirmation" (D:\\Bryan Stuff\\Claude Trading\\
 Angelfing Confirmation\\xauusd-backtest, lihat CLAUDE.md di sana):
-  * M5, sesi LONDON+NY 03:00-17:00 EST = 08:00-22:00 UTC, BUY & SELL.
-    (Sweep sesi 2026-08-02: di rezim 2026 perpanjangan ke NY menambah +24% R
-    dengan PF & streak sama [1.46, <=5]; Asia TIDAK dipakai - sesi terlemah
-    2026 [PF 1.25] dan PF 0.91 full-history. Full-history semua perpanjangan
-    dilutif; London-saja tetap terbaik utk RR3 all-weather [PF 1.07].)
+  * M5, sesi LONDON+NY+ASIA: 03:00-17:00 + 18:00-02:00 EST
+    = 08:00-22:00 + 23:00-07:00 UTC, BUY & SELL. (Keputusan user 2026-08-02.)
+    Sweep sesi (kausal): NY menambah +24% R di rezim 2026 (PF/streak sama);
+    Asia menambah lagi +12R di 2026 (PF 1.46->1.40, streak TP1 5->6) TAPI
+    memberatkan TP2 (streak 2026 13->19; histori s/d 24) dan tahun sideways
+    (2023: -80.9R). Pesan sinyal sesi ASIA membawa peringatan "TP1 saja".
+    Full-history semua perpanjangan dilutif; London-saja terbaik utk RR3.
   * Sinyal di bar M5 yang SUDAH CLOSE: tren M15 & M30 searah (EMA20>50 pada
     resample close, KAUSAL: hanya bar HTF yang sudah close, shift 1) + bar
     menyentuh EMA20(M5) + candle engulfing searah tren + ATR14 > median-288.
@@ -53,7 +55,14 @@ STATE_PATH = os.path.join(ROOT, "angelfing_state.json")
 def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
-SESSION_UTC = (8.0, 22.0)      # London open -> NY close: 03:00-17:00 EST (GMT-5) dalam UTC
+# Sesi dalam UTC: London+NY 08:00-22:00, Asia 23:00-07:00 (wrap tengah malam).
+# Gap 22-23 & 07-08 UTC (=17-18 & 02-03 EST) memang di luar definisi sesi backtest.
+def in_session(hh):
+    return ((hh >= 8.0) & (hh < 22.0)) | (hh >= 23.0) | (hh < 7.0)
+
+
+def is_asia_hour(hour_utc: int) -> bool:
+    return hour_utc >= 23 or hour_utc < 7
 ATR_P, AMED_N, SL_MULT = 14, 288, 1.5
 RR1, RR2 = 1.5, 3.0            # dua pilihan TP di satu pesan; dedup pakai TP1
 FRESH_MIN = float(os.environ.get("ANGELFING_FRESH_MIN", 20))   # menit; sinyal lebih tua di-skip
@@ -82,7 +91,7 @@ def signal_masks(df: pd.DataFrame):
     bear = (pc > po) & (c < o) & (c < po) & (o >= pc)
     touch = (l <= df["ema20"]) & (h >= df["ema20"])
     hh = df.index.hour + df.index.minute / 60.0
-    sess = (hh >= SESSION_UTC[0]) & (hh < SESSION_UTC[1])
+    sess = in_session(hh)
     vol = df["atr"] > df["amed"]
     L = (df["t15"] == 1) & (df["t30"] == 1) & touch & bull & vol & sess
     S = (df["t15"] == -1) & (df["t30"] == -1) & touch & bear & vol & sess
@@ -141,6 +150,9 @@ def evaluate_recent(df: pd.DataFrame, *, balance: float, risk_pct: float,
 
 def format_msg(sig: dict, age_min: float) -> str:
     arrow = "🟢 BUY" if sig["signal"] == "BUY" else "🔴 SELL"
+    asia = is_asia_hour(int(sig["bar_time"][11:13]))
+    asia_line = ("🌏 <b>Sinyal sesi ASIA — sebaiknya TP1 SAJA.</b> Backtest: TP2 dengan Asia "
+                 "streak s/d 19-24; TP1 hanya 6.\n") if asia else ""
     tol = round(0.3 * sig["sl_distance"], 2)
     if sig["signal"] == "BUY":
         lim = round(sig["entry"] + tol, 2); lim_txt = f"sudah DI ATAS {lim}"
@@ -148,8 +160,9 @@ def format_msg(sig: dict, age_min: float) -> str:
         lim = round(sig["entry"] - tol, 2); lim_txt = f"sudah DI BAWAH {lim}"
     return (
         f"<b>XAUUSD M5 — {arrow} (ANGELFING)</b>\n"
-        f"📊 Setup: <b>ANGELFING_M5</b> — engulfing + tren M15/M30 + sentuh EMA20 + ATR tinggi, sesi London+NY\n"
+        f"📊 Setup: <b>ANGELFING_M5</b> — engulfing + tren M15/M30 + sentuh EMA20 + ATR tinggi, sesi London+NY+Asia\n"
         f"🕒 Bar M5 closed: {sig['bar_time']} UTC (umur sinyal ~{age_min:.0f} mnt)\n"
+        f"{asia_line}"
         f"———————————————\n"
         f"➡️ <b>Entry</b>: ~{sig['entry']} (market SEKARANG — sinyal M5 cepat basi)\n"
         f"🛑 <b>Stop Loss</b>: {sig['sl']}  (jarak {sig['sl_distance']} = 1.5×ATR)\n"
@@ -255,7 +268,8 @@ def main():
     args = sys.argv[1:]
     if "--test" in args:
         token = os.environ.get("TG_BOT_TOKEN", ""); chat = os.environ.get("TG_CHAT_ID", "")
-        txt = ("✅ <b>ANGELFING_M5 bot AKTIF</b>\nJadwal: tiap 15 mnt, sesi London+NY (08:00-22:00 UTC, Sen-Jum).\n"
+        txt = ("✅ <b>ANGELFING_M5 bot AKTIF</b>\nJadwal: tiap 15 mnt, sesi London+NY+Asia "
+               "(08:00-22:00 &amp; 23:00-07:00 UTC).\n"
                "Sinyal engulfing M5 + tren M15/M30, SL 1.5×ATR, TP 1.5R.\n"
                f"🕒 {utcnow():%Y-%m-%d %H:%M} UTC")
         if token and chat:
