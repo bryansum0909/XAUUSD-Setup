@@ -7,13 +7,18 @@ name: Angelfing M5 Signal
 # Catatan jujur: cron GitHub sering telat 2-10 menit; ditambah delay data Yahoo,
 # umur sinyal saat sampai di Telegram bisa 5-20 menit. Sinyal >20 menit di-skip
 # otomatis (ANGELFING_FRESH_MIN).
+# CRON DINONAKTIFKAN 2026-08-02: sinyal ANGELFING_M5 sekarang dikirim REALTIME
+# oleh daemon di VPS Contabo (systemd angelfing-bot, /root/xauusd-bot, mode
+# --loop, latensi ~30-90 dtk). Workflow ini disimpan sebagai FALLBACK manual —
+# jalankan via workflow_dispatch kalau VPS mati. Untuk mengaktifkan cron lagi,
+# un-comment blok schedule di bawah.
 on:
-  schedule:
-    - cron: "*/15 8-21 * * 1-5"     # London+NY
-    - cron: "0,15 22 * * 1-5"       # ekor London+NY (bar 21:55)
-    - cron: "*/15 23 * * 0-4"       # Asia mulai (Minggu-Kamis 23:00 UTC)
-    - cron: "*/15 0-6 * * 1-5"      # Asia dini hari (Senin-Jumat)
-    - cron: "0,15 7 * * 1-5"        # ekor Asia (bar 06:55)
+  # schedule:
+  #   - cron: "*/15 8-21 * * 1-5"   # London+NY
+  #   - cron: "0,15 22 * * 1-5"     # ekor London+NY (bar 21:55)
+  #   - cron: "*/15 23 * * 0-4"     # Asia mulai (Minggu-Kamis 23:00 UTC)
+  #   - cron: "*/15 0-6 * * 1-5"    # Asia dini hari (Senin-Jumat)
+  #   - cron: "0,15 7 * * 1-5"      # ekor Asia (bar 06:55)
   workflow_dispatch:
     inputs:
       test:
