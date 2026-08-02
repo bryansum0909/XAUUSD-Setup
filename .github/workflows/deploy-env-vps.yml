@@ -1,0 +1,32 @@
+name: Deploy env to VPS
+
+# Menyalin TG_BOT_TOKEN (dari GitHub Secrets) langsung ke /root/xauusd-bot/.env
+# di VPS lewat kunci SSH TERBATAS: authorized_keys-nya memakai forced command
+# `cat > /root/xauusd-bot/.env` — kunci ini tidak bisa menjalankan perintah lain.
+# Token mengalir GitHub -> VPS tanpa pernah tampil di log atau di mana pun.
+# Jalankan manual (workflow_dispatch) hanya saat perlu isi/rotasi token.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write .env on VPS via restricted SSH key
+        env:
+          DEPLOY_KEY: ${{ secrets.ANGELFING_DEPLOY_KEY }}
+          TOKEN:      ${{ secrets.TG_BOT_TOKEN }}
+          CHAT:       ${{ secrets.TG_CHAT_ID }}
+        run: |
+          umask 077
+          printf '%s\n' "$DEPLOY_KEY" > key
+          echo "207.180.248.112 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIZytF1ZegwCs7v9Z5SEyjPWjjiajieJkIOPKKg6TutO" > kh
+          {
+            echo "TG_BOT_TOKEN=$TOKEN"
+            echo "TG_CHAT_ID=${CHAT:-189859979}"
+            echo "TG_BALANCE=10000"
+            echo "TG_RISK=2"
+            echo "ANGELFING_STATE_PATH=/root/xauusd-bot/state.json"
+          } | ssh -i key -o UserKnownHostsFile=kh -o StrictHostKeyChecking=yes root@207.180.248.112 write-env
+          echo "env deployed"
