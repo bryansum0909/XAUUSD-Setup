@@ -2,7 +2,11 @@
 
 Metode dari project "Angelfing Confirmation" (D:\\Bryan Stuff\\Claude Trading\\
 Angelfing Confirmation\\xauusd-backtest, lihat CLAUDE.md di sana):
-  * M5, sesi London 03:00-11:30 EST = 08:00-16:30 UTC, BUY & SELL.
+  * M5, sesi LONDON+NY 03:00-17:00 EST = 08:00-22:00 UTC, BUY & SELL.
+    (Sweep sesi 2026-08-02: di rezim 2026 perpanjangan ke NY menambah +24% R
+    dengan PF & streak sama [1.46, <=5]; Asia TIDAK dipakai - sesi terlemah
+    2026 [PF 1.25] dan PF 0.91 full-history. Full-history semua perpanjangan
+    dilutif; London-saja tetap terbaik utk RR3 all-weather [PF 1.07].)
   * Sinyal di bar M5 yang SUDAH CLOSE: tren M15 & M30 searah (EMA20>50 pada
     resample close, KAUSAL: hanya bar HTF yang sudah close, shift 1) + bar
     menyentuh EMA20(M5) + candle engulfing searah tren + ATR14 > median-288.
@@ -49,7 +53,7 @@ STATE_PATH = os.path.join(ROOT, "angelfing_state.json")
 def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
-SESSION_UTC = (8.0, 16.5)      # 03:00-11:30 EST (GMT-5 tanpa DST) dalam UTC
+SESSION_UTC = (8.0, 22.0)      # London open -> NY close: 03:00-17:00 EST (GMT-5) dalam UTC
 ATR_P, AMED_N, SL_MULT = 14, 288, 1.5
 RR1, RR2 = 1.5, 3.0            # dua pilihan TP di satu pesan; dedup pakai TP1
 FRESH_MIN = float(os.environ.get("ANGELFING_FRESH_MIN", 20))   # menit; sinyal lebih tua di-skip
@@ -144,7 +148,7 @@ def format_msg(sig: dict, age_min: float) -> str:
         lim = round(sig["entry"] - tol, 2); lim_txt = f"sudah DI BAWAH {lim}"
     return (
         f"<b>XAUUSD M5 — {arrow} (ANGELFING)</b>\n"
-        f"📊 Setup: <b>ANGELFING_M5</b> — engulfing + tren M15/M30 + sentuh EMA20 + ATR tinggi, sesi London\n"
+        f"📊 Setup: <b>ANGELFING_M5</b> — engulfing + tren M15/M30 + sentuh EMA20 + ATR tinggi, sesi London+NY\n"
         f"🕒 Bar M5 closed: {sig['bar_time']} UTC (umur sinyal ~{age_min:.0f} mnt)\n"
         f"———————————————\n"
         f"➡️ <b>Entry</b>: ~{sig['entry']} (market SEKARANG — sinyal M5 cepat basi)\n"
@@ -251,7 +255,7 @@ def main():
     args = sys.argv[1:]
     if "--test" in args:
         token = os.environ.get("TG_BOT_TOKEN", ""); chat = os.environ.get("TG_CHAT_ID", "")
-        txt = ("✅ <b>ANGELFING_M5 bot AKTIF</b>\nJadwal: tiap 15 mnt, sesi London (08:00-16:30 UTC, Sen-Jum).\n"
+        txt = ("✅ <b>ANGELFING_M5 bot AKTIF</b>\nJadwal: tiap 15 mnt, sesi London+NY (08:00-22:00 UTC, Sen-Jum).\n"
                "Sinyal engulfing M5 + tren M15/M30, SL 1.5×ATR, TP 1.5R.\n"
                f"🕒 {utcnow():%Y-%m-%d %H:%M} UTC")
         if token and chat:

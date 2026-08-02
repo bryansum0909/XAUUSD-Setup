@@ -1,13 +1,15 @@
 name: Angelfing M5 Signal
 
-# Sinyal engulfing M5 sesi London — jalan tiap 15 menit HANYA selama sesi
-# (08:00-16:30 UTC, Senin-Jumat) supaya hemat kuota Actions.
+# Sinyal engulfing M5 sesi London+NY — jalan tiap 15 menit HANYA selama sesi
+# (08:00-22:00 UTC, Senin-Jumat) supaya hemat kuota Actions; dua run ekstra
+# jam 22:00/22:15 menangkap bar terakhir sesi (21:55) dalam jendela segar.
 # Catatan jujur: cron GitHub sering telat 2-10 menit; ditambah delay data Yahoo,
 # umur sinyal saat sampai di Telegram bisa 5-20 menit. Sinyal >20 menit di-skip
 # otomatis (ANGELFING_FRESH_MIN).
 on:
   schedule:
-    - cron: "*/15 8-16 * * 1-5"
+    - cron: "*/15 8-21 * * 1-5"
+    - cron: "0,15 22 * * 1-5"
   workflow_dispatch:
     inputs:
       test:
