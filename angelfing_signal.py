@@ -32,11 +32,16 @@ broker). Kuota Yahoo 5m ~60 hari; kita ambil 30 hari (cukup warmup EMA/median).
 Pemakaian:
   python angelfing_signal.py --once            # cek bar terakhir, kirim Telegram
   python angelfing_signal.py --once --dry-run  # print saja
+  python angelfing_signal.py --loop            # REALTIME daemon (VPS): bangun tiap
+                                               # bar M5 close +25 dtk, retry fetch
+                                               # sampai bar baru muncul di Yahoo
   python angelfing_signal.py --test            # kirim pesan uji koneksi
-State dedup: angelfing_state.json (terpisah dari bot H1 agar tidak bentrok git).
+State dedup: angelfing_state.json (terpisah dari bot H1 agar tidak bentrok git);
+path bisa dioverride via env ANGELFING_STATE_PATH (dipakai di VPS agar git pull
+tidak konflik dengan state yang di-commit workflow GitHub).
 """
 from __future__ import annotations
-import os, sys, json, datetime as dt
+import os, sys, json, time, datetime as dt
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
@@ -49,7 +54,7 @@ from src import data_loader as dl
 from signal_engine import lot_for_risk, risk_for_lot
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-STATE_PATH = os.path.join(ROOT, "angelfing_state.json")
+STATE_PATH = os.environ.get("ANGELFING_STATE_PATH", os.path.join(ROOT, "angelfing_state.json"))
 
 
 def utcnow() -> dt.datetime:
@@ -214,13 +219,21 @@ def position_closed(pos: dict, df_after: pd.DataFrame):
     return False, "open"
 
 
-def check_once(dry_run=False):
+def check_once(dry_run=False, expected_last=None, retries=5):
+    """expected_last (mode loop): stempel bar M5 yang baru saja close — retry fetch
+    sampai bar itu muncul di feed Yahoo (delay feed ~30-90 dtk)."""
     token = os.environ.get("TG_BOT_TOKEN", "")
     chat = os.environ.get("TG_CHAT_ID", "")
     balance = float(os.environ.get("TG_BALANCE", 10000.0))
     risk_pct = float(os.environ.get("TG_RISK", 2.0))
 
     df = get_m5()
+    if expected_last is not None:
+        for _ in range(retries):
+            if len(df) and df.index[-1] >= expected_last:
+                break
+            time.sleep(20)
+            df = get_m5()
     if len(df) < AMED_N + ATR_P + 10:
         print(f"data kurang: {len(df)} bar"); return
     state = load_state()
@@ -264,6 +277,36 @@ def check_once(dry_run=False):
     save_state(state)
 
 
+def market_open(bar_start: pd.Timestamp) -> bool:
+    """Pasar emas: buka Minggu 23:00 UTC, tutup Jumat 22:00 UTC."""
+    wd, hh = bar_start.weekday(), bar_start.hour + bar_start.minute / 60.0
+    if wd == 5: return False                 # Sabtu
+    if wd == 6: return hh >= 23.0            # Minggu: baru buka 23:00
+    if wd == 4 and hh >= 22.0: return False  # Jumat malam
+    return True
+
+
+def loop():
+    """Daemon realtime (VPS): tiap bar M5 close (+25 dtk buffer feed) evaluasi sekali.
+    Di luar sesi/akhir pekan hanya tidur — tanpa fetch."""
+    print(f"[{utcnow():%Y-%m-%d %H:%M}] ANGELFING_M5 realtime loop start "
+          f"(sesi UTC 08-22 & 23-07, state={STATE_PATH})", flush=True)
+    while True:
+        now = utcnow()
+        wait = (5 - now.minute % 5) * 60 - now.second + 25
+        time.sleep(max(5, wait))
+        boundary = utcnow().replace(second=0, microsecond=0)
+        boundary = boundary - dt.timedelta(minutes=boundary.minute % 5)
+        bar_start = pd.Timestamp(boundary) - pd.Timedelta(minutes=5)
+        hh = bar_start.hour + bar_start.minute / 60.0
+        if not (market_open(bar_start) and in_session(np.array([hh]))[0]):
+            continue
+        try:
+            check_once(expected_last=bar_start)
+        except Exception as e:
+            print(f"[{utcnow():%Y-%m-%d %H:%M}] loop error: {e}", flush=True)
+
+
 def main():
     args = sys.argv[1:]
     if "--test" in args:
@@ -277,6 +320,8 @@ def main():
         else:
             print(txt)
         return
+    if "--loop" in args:
+        loop(); return
     check_once(dry_run="--dry-run" in args)
 
 
