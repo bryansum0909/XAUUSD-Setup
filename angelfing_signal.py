@@ -234,6 +234,10 @@ def check_once(dry_run=False, expected_last=None, retries=5):
                 break
             time.sleep(20)
             df = get_m5()
+        else:
+            print(f"[{utcnow():%Y-%m-%d %H:%M}] FEED LAG: bar {expected_last} belum muncul "
+                  f"setelah {retries}x retry (terakhir di feed: {df.index[-1] if len(df) else '-'}) "
+                  f"— evaluasi pakai data yang ada", flush=True)
     if len(df) < AMED_N + ATR_P + 10:
         print(f"data kurang: {len(df)} bar"); return
     state = load_state()
