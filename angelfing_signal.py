@@ -103,6 +103,35 @@ def signal_masks(df: pd.DataFrame):
     return L.fillna(False), S.fillna(False), df
 
 
+def spot_basis(gc_close: pd.Series):
+    """Selisih GC=F (futures) - XAUUSD spot, dihitung ULANG tiap sinyal.
+
+    WAJIB dinamis: basis melompat ~$60 saat GC=F ganti kontrak (terukur 29 Jul 2026:
+    +$7 -> +$58), jadi angka tetap akan menyesatkan. Sumber spot = Dukascopy jam
+    penuh terakhir (gratis, tanpa key; sama dengan sumber data backtest 2026).
+    Basis sendiri bergerak lambat (std per jam $0.33) sehingga acuan 1-2 jam lalu
+    tetap akurat. Return (basis, waktu_referensi) atau (None, None) kalau gagal.
+    """
+    try:
+        import requests
+        sess = requests.Session()
+        now = utcnow().replace(minute=0, second=0, microsecond=0)
+        for back in (1, 2, 3):
+            hr = now - dt.timedelta(hours=back)
+            ticks = dl.fetch_dukascopy_hour("XAUUSD", hr, sess)
+            if not len(ticks):
+                continue
+            t_ref = ticks.index[-1]
+            spot = float((ticks["ask"].iloc[-1] + ticks["bid"].iloc[-1]) / 2)
+            near = gc_close[gc_close.index <= t_ref]
+            if not len(near):
+                continue
+            return round(float(near.iloc[-1]) - spot, 2), t_ref
+    except Exception as e:
+        print(f"basis spot gagal: {e}")
+    return None, None
+
+
 def get_m5(lookback_days: int = 30) -> pd.DataFrame:
     df = dl.fetch_yahoo("GC=F", interval="5m", range_=f"{lookback_days}d")
     df = df[~df.index.duplicated()].sort_index()
@@ -153,22 +182,42 @@ def evaluate_recent(df: pd.DataFrame, *, balance: float, risk_pct: float,
             "risk_pct": risk_pct, "balance": balance}
 
 
-def format_msg(sig: dict, age_min: float) -> str:
+def spot_block(sig: dict, basis, t_ref) -> str:
+    """Blok level SPOT (setara harga broker) — inilah yang dipakai user untuk entry."""
+    if basis is None:
+        return ("⚠️ Konversi spot gagal (feed Dukascopy) — pakai JARAK di bawah, "
+                "diterapkan dari harga broker-mu saat ini.\n")
+    d = 1 if sig["signal"] == "BUY" else -1
+    e = sig["entry"] - basis
+    return (f"💱 <b>LEVEL SPOT (pakai ini di broker-mu)</b> — basis futures {basis:+.2f} "
+            f"per {t_ref:%H:%M} UTC\n"
+            f"   ➡️ Entry ~<b>{e:.2f}</b>  🛑 SL <b>{e - d*sig['sl_distance']:.2f}</b>  "
+            f"🎯 TP1 <b>{e + d*sig['tp1_distance']:.2f}</b>  🎯 TP2 <b>{e + d*sig['tp2_distance']:.2f}</b>\n"
+            f"   (broker-mu bisa beda ±$1; kalau meleset jauh, pakai JARAK dari harga broker)\n")
+
+
+def format_msg(sig: dict, age_min: float, basis=None, t_ref=None) -> str:
     arrow = "🟢 BUY" if sig["signal"] == "BUY" else "🔴 SELL"
     asia = is_asia_hour(int(sig["bar_time"][11:13]))
     asia_line = ("🌏 <b>Sinyal sesi ASIA — sebaiknya TP1 SAJA.</b> Backtest: TP2 dengan Asia "
                  "streak s/d 19-24; TP1 hanya 6.\n") if asia else ""
     tol = round(0.3 * sig["sl_distance"], 2)
+    # batas basi ditampilkan dalam harga SPOT bila konversi tersedia (itu yang dilihat user)
+    ref = sig["entry"] - basis if basis is not None else sig["entry"]
+    unit = "spot" if basis is not None else "GC=F"
     if sig["signal"] == "BUY":
-        lim = round(sig["entry"] + tol, 2); lim_txt = f"sudah DI ATAS {lim}"
+        lim_txt = f"sudah DI ATAS {ref + tol:.2f} ({unit})"
     else:
-        lim = round(sig["entry"] - tol, 2); lim_txt = f"sudah DI BAWAH {lim}"
+        lim_txt = f"sudah DI BAWAH {ref - tol:.2f} ({unit})"
     return (
         f"<b>XAUUSD M5 — {arrow} (ANGELFING)</b>\n"
         f"📊 Setup: <b>ANGELFING_M5</b> — engulfing + tren M15/M30 + sentuh EMA20 + ATR tinggi, sesi London+NY+Asia\n"
         f"🕒 Bar M5 closed: {sig['bar_time']} UTC (umur sinyal ~{age_min:.0f} mnt)\n"
         f"{asia_line}"
         f"———————————————\n"
+        f"{spot_block(sig, basis, t_ref)}"
+        f"———————————————\n"
+        f"<i>Acuan data (GC=F futures):</i>\n"
         f"➡️ <b>Entry</b>: ~{sig['entry']} (market SEKARANG — sinyal M5 cepat basi)\n"
         f"🛑 <b>Stop Loss</b>: {sig['sl']}  (jarak {sig['sl_distance']} = 1.5×ATR)\n"
         f"🎯 <b>TP1</b>: {sig['tp']}  (RR 1.5 — unggul di rezim 2026: PF 1.46, WR 50%, streak ≤5)\n"
@@ -178,7 +227,7 @@ def format_msg(sig: dict, age_min: float) -> str:
         f"risk riil setelah pembulatan ≈ ${sig['risk_actual']})\n"
         f"———————————————\n"
         f"⏱️ ATURAN BASI: kalau harga {lim_txt} — <b>SKIP</b>, jarak ke TP sudah termakan.\n"
-        f"⚠️ Harga = GC=F (futures). Terapkan JARAK SL/TP ke harga XAUUSD broker-mu.\n"
+        f"⚠️ Sinyal dibaca dari GC=F; level spot di atas sudah dikonversi untuk broker-mu.\n"
         f"📉 Edge hanya saat TREN jelas; tahun sideways ≈ impas. Sinyal baru bisa datang "
         f"saat posisi TP2 masih jalan — sesuaikan sendiri.\n"
         f"DEMO/manual. Backtest ≠ hasil masa depan."
@@ -273,7 +322,8 @@ def check_once(dry_run=False, expected_last=None, retries=2):
         state["last_signal_bar"] = sig["bar_time"]; save_state(state)
         return
 
-    msg = format_msg(sig, age_min)
+    basis, t_ref = spot_basis(df["close"])
+    msg = format_msg(sig, age_min, basis, t_ref)
     if dry_run or not token or not chat:
         print("--- DRY ANGELFING_M5 ---\n" + msg)
     else:
