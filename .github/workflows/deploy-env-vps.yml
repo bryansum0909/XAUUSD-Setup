@@ -1,5 +1,9 @@
 name: Deploy env to VPS
 
+# PENTING — TG_BALANCE HARUS DALAM USD, bukan mata uang akun.
+# Akun user = HFM cent, saldo 10.000 USC = 100 USD, simbol XAUUSDc (CONTRACT=1.0 oz/lot).
+# Mengisi 10000 di sini membuat setiap lot 100x terlalu besar (risiko 200% saldo per trade).
+#
 # Menyalin TG_BOT_TOKEN (dari GitHub Secrets) langsung ke /root/xauusd-bot/.env
 # di VPS lewat kunci SSH TERBATAS: authorized_keys-nya memakai forced command
 # `cat > /root/xauusd-bot/.env` — kunci ini tidak bisa menjalankan perintah lain.
@@ -25,7 +29,7 @@ jobs:
           {
             echo "TG_BOT_TOKEN=$TOKEN"
             echo "TG_CHAT_ID=${CHAT:-189859979}"
-            echo "TG_BALANCE=10000"
+            echo "TG_BALANCE=100"
             echo "TG_RISK=2"
             echo "ANGELFING_STATE_PATH=/root/xauusd-bot/state.json"
           } | ssh -i key -o UserKnownHostsFile=kh -o StrictHostKeyChecking=yes root@207.180.248.112 write-env
