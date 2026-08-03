@@ -219,9 +219,12 @@ def position_closed(pos: dict, df_after: pd.DataFrame):
     return False, "open"
 
 
-def check_once(dry_run=False, expected_last=None, retries=5):
+def check_once(dry_run=False, expected_last=None, retries=2):
     """expected_last (mode loop): stempel bar M5 yang baru saja close — retry fetch
-    sampai bar itu muncul di feed Yahoo (delay feed ~30-90 dtk)."""
+    singkat. KENYATAAN FEED (diukur 2026-08-03): GC=F Yahoo = data CME tertunda
+    ~10 menit by-license, bar baru biasanya muncul SATU siklus kemudian — jadi
+    retry panjang sia-sia; evaluate_recent menangkap bar telat di siklus berikut
+    (latensi sinyal efektif ~6-11 mnt, masih dalam gerbang segar 20 mnt)."""
     token = os.environ.get("TG_BOT_TOKEN", "")
     chat = os.environ.get("TG_CHAT_ID", "")
     balance = float(os.environ.get("TG_BALANCE", 10000.0))
