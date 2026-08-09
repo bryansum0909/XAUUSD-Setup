@@ -112,23 +112,34 @@ def spot_basis(gc_close: pd.Series):
     Basis sendiri bergerak lambat (std per jam $0.33) sehingga acuan 1-2 jam lalu
     tetap akurat. Return (basis, waktu_referensi) atau (None, None) kalau gagal.
     """
-    try:
-        import requests
-        sess = requests.Session()
-        now = utcnow().replace(minute=0, second=0, microsecond=0)
-        for back in (1, 2, 3):
-            hr = now - dt.timedelta(hours=back)
+    import requests
+    sess = requests.Session()
+    now = utcnow().replace(minute=0, second=0, microsecond=0)
+    # kandidat jam: 4 jam terakhir, lalu (utk akhir pekan / Senin dini hari yang
+    # semua jam mundurnya kosong) langsung lompat ke jam perdagangan akhir Jumat.
+    cands = [now - dt.timedelta(hours=k) for k in (1, 2, 3, 4)]
+    fri = now
+    while fri.weekday() != 4:                       # mundur ke Jumat terakhir
+        fri -= dt.timedelta(days=1)
+    fri = fri.replace(hour=21)
+    if fri < now:
+        cands += [fri, fri - dt.timedelta(hours=1), fri - dt.timedelta(hours=2)]
+    for hr in cands:
+        try:
             ticks = dl.fetch_dukascopy_hour("XAUUSD", hr, sess)
-            if not len(ticks):
-                continue
-            t_ref = ticks.index[-1]
-            spot = float((ticks["ask"].iloc[-1] + ticks["bid"].iloc[-1]) / 2)
-            near = gc_close[gc_close.index <= t_ref]
-            if not len(near):
-                continue
-            return round(float(near.iloc[-1]) - spot, 2), t_ref
-    except Exception as e:
-        print(f"basis spot gagal: {e}")
+        except Exception as e:
+            # 503 transien pada SATU jam tidak boleh membatalkan semuanya
+            print(f"basis: jam {hr:%d/%m %H}h gagal ({str(e)[:60]}), coba jam lain")
+            continue
+        if not len(ticks):
+            continue
+        t_ref = ticks.index[-1]
+        spot = float((ticks["ask"].iloc[-1] + ticks["bid"].iloc[-1]) / 2)
+        near = gc_close[gc_close.index <= t_ref]
+        if not len(near):
+            continue
+        return round(float(near.iloc[-1]) - spot, 2), t_ref
+    print("basis spot gagal: semua kandidat jam kosong/error")
     return None, None
 
 
@@ -190,7 +201,7 @@ def spot_block(sig: dict, basis, t_ref) -> str:
     d = 1 if sig["signal"] == "BUY" else -1
     e = sig["entry"] - basis
     return (f"💱 <b>LEVEL SPOT (pakai ini di broker-mu)</b> — basis futures {basis:+.2f} "
-            f"per {t_ref:%H:%M} UTC\n"
+            f"per {t_ref:%d/%m %H:%M} UTC\n"
             f"   ➡️ Entry ~<b>{e:.2f}</b>  🛑 SL <b>{e - d*sig['sl_distance']:.2f}</b>  "
             f"🎯 TP1 <b>{e + d*sig['tp1_distance']:.2f}</b>  🎯 TP2 <b>{e + d*sig['tp2_distance']:.2f}</b>\n"
             f"   (broker-mu bisa beda ±$1; kalau meleset jauh, pakai JARAK dari harga broker)\n")
